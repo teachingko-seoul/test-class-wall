@@ -1,0 +1,19 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // memos 컬렉션 규칙
+    match /memos/{memoId} {
+      // 메모 읽기 및 삭제 허용
+      allow read, delete: if true;
+
+      // 메모 생성 시 text가 5글자 이상인지 백엔드 검증
+      allow create: if request.resource.data.text is string
+                   && request.resource.data.text.size() >= 5
+                   && request.resource.data.createdAt is number;
+
+      // 메모 수정 금지
+      allow update: if false;
+    }
+  }
+}
