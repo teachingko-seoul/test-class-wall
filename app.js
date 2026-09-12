@@ -1,5 +1,5 @@
 // ===================================================
-// 우리 반 담벼락 - Firebase Firestore & Auth 연동
+// 우리 반 담벼락 - Firebase Firestore, Auth & Gemini AI 연동
 // ===================================================
 
 // Firebase SDK 불러오기 (CDN ES Module)
@@ -11,6 +11,7 @@ import {
   getDocs, 
   getDoc,
   setDoc,
+  updateDoc,
   deleteDoc, 
   doc, 
   query, 
@@ -74,6 +75,36 @@ async function loadUserRole(uid, email) {
 
 
 // ===================================================
+// AI 코멘트 생성 함수 (교사 전용)
+// ===================================================
+
+async function generateAiComment(memoId, memoText) {
+  try {
+    const response = await fetch("/api/gemini", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ memoText: memoText })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      alert("AI 코멘트 생성 실패: " + (data.error || "오류가 발생했습니다."));
+      return;
+    }
+
+    // Firestore 해당 메모 문서에 AI 코멘트 업데이트
+    const memoRef = doc(db, "memos", memoId);
+    await updateDoc(memoRef, {
+      aiComment: data.comment
+    });
+  } catch (error) {
+    console.error("AI 코멘트 생성 중 에러:", error);
+    alert("AI 코멘트를 생성하는 도중 에러가 발생했습니다.");
+  }
+}
+
+
+// ===================================================
 // 로그인 / 사용자 상태 관리
 // ===================================================
 
@@ -87,6 +118,27 @@ function renderUserArea(user) {
     const span = document.createElement("span");
     span.textContent = `${user.displayName || user.email || "사용자"}님 (${roleText}) 환영합니다! `;
     userArea.appendChild(span);
+
+    // 교사 전용 전체 AI 코멘트 작성 버튼
+    if (currentUserRole === "teacher") {
+      const allAiBtn = document.createElement("button");
+      allAiBtn.style.marginRight = "8px";
+      allAiBtn.textContent = "🤖 전체 게시물 AI 코멘트 생성";
+      allAiBtn.onclick = async function () {
+        allAiBtn.disabled = true;
+        allAiBtn.textContent = "🤖 생성 중...";
+        const memos = await loadMemos();
+        for (const memo of memos) {
+          if (!memo.aiComment) {
+            await generateAiComment(memo.id, memo.text);
+          }
+        }
+        allAiBtn.disabled = false;
+        allAiBtn.textContent = "🤖 전체 게시물 AI 코멘트 생성";
+        render();
+      };
+      userArea.appendChild(allAiBtn);
+    }
 
     const logoutBtn = document.createElement("button");
     logoutBtn.textContent = "로그아웃";
@@ -212,6 +264,35 @@ function makeMemo(memo) {
     div.appendChild(authorDiv);
   }
 
+  // AI 코멘트가 있을 경우 표시
+  if (memo.aiComment) {
+    const aiBox = document.createElement("div");
+    aiBox.style.marginTop = "8px";
+    aiBox.style.padding = "6px 8px";
+    aiBox.style.background = "#e8f5e9";
+    aiBox.style.borderRadius = "6px";
+    aiBox.style.fontSize = "13px";
+    aiBox.style.color = "#2e7d32";
+    aiBox.textContent = `🤖 AI 코멘트: ${memo.aiComment}`;
+    div.appendChild(aiBox);
+  }
+
+  // 교사(teacher)에게 개별 AI 코멘트 생성/재생성 버튼 제공
+  if (currentUserRole === "teacher") {
+    const aiBtn = document.createElement("button");
+    aiBtn.style.marginTop = "8px";
+    aiBtn.style.fontSize = "12px";
+    aiBtn.style.cursor = "pointer";
+    aiBtn.textContent = memo.aiComment ? "🤖 AI 코멘트 재생성" : "🤖 AI 코멘트 작성";
+    aiBtn.onclick = async function () {
+      aiBtn.disabled = true;
+      aiBtn.textContent = "🤖 생성 중...";
+      await generateAiComment(memo.id, memo.text);
+      render();
+    };
+    div.appendChild(aiBtn);
+  }
+
   return div;
 }
 
@@ -248,6 +329,7 @@ input.onkeydown = async function (e) {
 // 첫 화면 그리기
 render();
 input.focus();
+
 
 
 
