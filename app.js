@@ -9,6 +9,8 @@ import {
   collection, 
   addDoc, 
   getDocs, 
+  getDoc,
+  setDoc,
   deleteDoc, 
   doc, 
   query, 
@@ -39,8 +41,36 @@ const db = getFirestore(app);
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
-// 현재 로그인된 사용자 정보
+// 현재 로그인된 사용자 정보 및 역할 (teacher / student)
 let currentUser = null;
+let currentUserRole = "student";
+
+
+// ===================================================
+// 사용자 역할(Role) 불러오기 / 저장하기
+// ===================================================
+
+async function loadUserRole(uid, email) {
+  try {
+    const userDocRef = doc(db, "users", uid);
+    const userSnap = await getDoc(userDocRef);
+    if (userSnap.exists()) {
+      return userSnap.data().role || "student";
+    } else {
+      // 신규 사용자는 기본적으로 'student' 역할로 저장
+      const defaultRole = "student";
+      await setDoc(userDocRef, { 
+        role: defaultRole, 
+        email: email || "",
+        createdAt: Date.now()
+      });
+      return defaultRole;
+    }
+  } catch (error) {
+    console.error("사용자 역할 조회 실패:", error);
+    return "student";
+  }
+}
 
 
 // ===================================================
@@ -52,8 +82,10 @@ function renderUserArea(user) {
   userArea.innerHTML = "";
 
   if (user) {
+    const roleText = currentUserRole === "teacher" ? "교사" : "학생";
+
     const span = document.createElement("span");
-    span.textContent = `${user.displayName || user.email || "사용자"}님 환영합니다! `;
+    span.textContent = `${user.displayName || user.email || "사용자"}님 (${roleText}) 환영합니다! `;
     userArea.appendChild(span);
 
     const logoutBtn = document.createElement("button");
@@ -76,8 +108,13 @@ function renderUserArea(user) {
 }
 
 // 로그인 상태 변경 감지
-onAuthStateChanged(auth, function (user) {
+onAuthStateChanged(auth, async function (user) {
   currentUser = user;
+  if (user) {
+    currentUserRole = await loadUserRole(user.uid, user.email);
+  } else {
+    currentUserRole = "student";
+  }
   renderUserArea(user);
   render();
 });
@@ -104,7 +141,7 @@ async function loadMemos() {
 
 // 메모를 새로 씁니다.
 // Firestore "memos" 컬렉션에 새 메모 문서를 추가합니다. (5글자 이상만 저장)
-// 로그인 상태인 경우 작성자 uid와 이름을 함께 기록합니다.
+// 학생은 본인의 uid로만 작성할 수 있으며, 로그인된 경우 작성자 uid와 이름을 기록합니다.
 async function addMemo(text) {
   if (!text || text.trim().length < 5) {
     return;
@@ -124,6 +161,7 @@ async function addMemo(text) {
 
 // 메모를 지웁니다.
 // Firestore "memos" 컬렉션에서 해당 문서(id)를 삭제합니다.
+// 교사는 모든 메모를 지울 수 있고, 학생은 본인이 쓴 메모만 지울 수 있습니다.
 async function deleteMemo(id) {
   await deleteDoc(doc(db, "memos", id));
 }
@@ -148,8 +186,10 @@ function makeMemo(memo) {
   const div = document.createElement("div");
   div.className = "memo";
 
-  // 작성자가 없거나(이전 메모), 내가 작성한 메모인 경우 삭제 버튼 표시
-  if (!memo.uid || (currentUser && memo.uid === currentUser.uid)) {
+  // 교사(teacher)이거나, 본인이 작성한 메모이거나, 작성자 정보가 없는 기존 메모인 경우 삭제 버튼 표시
+  const canDelete = currentUserRole === "teacher" || !memo.uid || (currentUser && memo.uid === currentUser.uid);
+
+  if (canDelete) {
     const del = document.createElement("button");
     del.textContent = "×";
     del.onclick = async function () {
@@ -208,5 +248,6 @@ input.onkeydown = async function (e) {
 // 첫 화면 그리기
 render();
 input.focus();
+
 
 

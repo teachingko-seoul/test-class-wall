@@ -2,23 +2,44 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // memos 컬렉션 규칙
+
+    // 교사(teacher) 권한 확인 헬퍼 함수
+    function isTeacher() {
+      return request.auth != null &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+    }
+
+    // users 컬렉션 보안 규칙 (사용자 역할 정보)
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // memos 컬렉션 보안 규칙
     match /memos/{memoId} {
-      // 메모 읽기 허용
+      // 읽기는 모든 사용자에게 허용
       allow read: if true;
 
-      // 메모 생성 시 5글자 이상 필수 검증
-      allow create: if request.resource.data.text is string
+      // 생성 규칙:
+      // - 로그인한 사용자만 가능
+      // - text는 5글자 이상, createdAt은 숫자 형태 필수
+      // - 교사는 제한 없이 생성 가능, 학생은 본인의 uid로만 생성 가능
+      allow create: if request.auth != null
+                   && request.resource.data.text is string
                    && request.resource.data.text.size() >= 5
-                   && request.resource.data.createdAt is number;
+                   && request.resource.data.createdAt is number
+                   && (isTeacher() || request.resource.data.uid == request.auth.uid);
 
-      // 작성자가 지정되어 있지 않은 이전 메모이거나 본인이 쓴 메모만 삭제 허용
-      allow delete: if !('uid' in resource.data) 
-                   || resource.data.uid == null 
-                   || (request.auth != null && resource.data.uid == request.auth.uid);
+      // 삭제 규칙:
+      // - 교사(teacher)는 모든 메모 삭제 가능
+      // - 학생(student)은 본인이 작성한 메모만 삭제 가능 (다른 사람 메모 삭제 불가)
+      allow delete: if isTeacher() || (request.auth != null && resource.data.uid == request.auth.uid);
 
-      // 메모 수정 금지
-      allow update: if false;
+      // 수정 규칙:
+      // - 교사는 모든 메모 수정 가능
+      // - 학생은 본인이 작성한 메모만 수정 가능 (다른 사람 메모 수정 불가)
+      allow update: if isTeacher() || (request.auth != null && resource.data.uid == request.auth.uid);
     }
   }
 }
