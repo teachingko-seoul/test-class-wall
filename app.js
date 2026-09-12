@@ -1,5 +1,5 @@
 // ===================================================
-// 우리 반 담벼락 - Firebase Firestore 연동
+// 우리 반 담벼락 - Firebase Firestore & Auth 연동
 // ===================================================
 
 // Firebase SDK 불러오기 (CDN ES Module)
@@ -15,6 +15,13 @@ import {
   orderBy, 
   onSnapshot 
 } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+import { 
+  getAuth, 
+  signInWithPopup, 
+  GoogleAuthProvider, 
+  signOut, 
+  onAuthStateChanged 
+} from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
 
 // Firebase 설정 정보
 const firebaseConfig = {
@@ -26,9 +33,54 @@ const firebaseConfig = {
   appId: "1:669452417840:web:b89750523a74f7b348e6f5"
 };
 
-// Firebase 및 Firestore 초기화
+// Firebase, Firestore, Auth 초기화
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const auth = getAuth(app);
+const googleProvider = new GoogleAuthProvider();
+
+// 현재 로그인된 사용자 정보
+let currentUser = null;
+
+
+// ===================================================
+// 로그인 / 사용자 상태 관리
+// ===================================================
+
+function renderUserArea(user) {
+  const userArea = document.getElementById("userArea");
+  userArea.innerHTML = "";
+
+  if (user) {
+    const span = document.createElement("span");
+    span.textContent = `${user.displayName || user.email || "사용자"}님 환영합니다! `;
+    userArea.appendChild(span);
+
+    const logoutBtn = document.createElement("button");
+    logoutBtn.textContent = "로그아웃";
+    logoutBtn.onclick = function () {
+      signOut(auth);
+    };
+    userArea.appendChild(logoutBtn);
+  } else {
+    const loginBtn = document.createElement("button");
+    loginBtn.textContent = "Google 로그인";
+    loginBtn.onclick = function () {
+      signInWithPopup(auth, googleProvider).catch(function (error) {
+        console.error("로그인 실패:", error);
+        alert("로그인에 실패했습니다: " + error.message);
+      });
+    };
+    userArea.appendChild(loginBtn);
+  }
+}
+
+// 로그인 상태 변경 감지
+onAuthStateChanged(auth, function (user) {
+  currentUser = user;
+  renderUserArea(user);
+  render();
+});
 
 
 // ===================================================
@@ -51,12 +103,23 @@ async function loadMemos() {
 }
 
 // 메모를 새로 씁니다.
-// Firestore "memos" 컬렉션에 새 메모 문서를 추가합니다.
+// Firestore "memos" 컬렉션에 새 메모 문서를 추가합니다. (5글자 이상만 저장)
+// 로그인 상태인 경우 작성자 uid와 이름을 함께 기록합니다.
 async function addMemo(text) {
-  await addDoc(collection(db, "memos"), {
-    text: text,
+  if (!text || text.trim().length < 5) {
+    return;
+  }
+  const memoData = {
+    text: text.trim(),
     createdAt: Date.now()
-  });
+  };
+
+  if (currentUser) {
+    memoData.uid = currentUser.uid;
+    memoData.author = currentUser.displayName || currentUser.email || "익명";
+  }
+
+  await addDoc(collection(db, "memos"), memoData);
 }
 
 // 메모를 지웁니다.
@@ -85,17 +148,29 @@ function makeMemo(memo) {
   const div = document.createElement("div");
   div.className = "memo";
 
-  const del = document.createElement("button");
-  del.textContent = "×";
-  del.onclick = async function () {
-    await deleteMemo(memo.id);
-    render();
-  };
-  div.appendChild(del);
+  // 작성자가 없거나(이전 메모), 내가 작성한 메모인 경우 삭제 버튼 표시
+  if (!memo.uid || (currentUser && memo.uid === currentUser.uid)) {
+    const del = document.createElement("button");
+    del.textContent = "×";
+    del.onclick = async function () {
+      await deleteMemo(memo.id);
+      render();
+    };
+    div.appendChild(del);
+  }
 
   const span = document.createElement("span");
   span.textContent = memo.text;
   div.appendChild(span);
+
+  if (memo.author) {
+    const authorDiv = document.createElement("div");
+    authorDiv.style.fontSize = "12px";
+    authorDiv.style.color = "#888";
+    authorDiv.style.marginTop = "6px";
+    authorDiv.textContent = `- ${memo.author}`;
+    div.appendChild(authorDiv);
+  }
 
   return div;
 }
@@ -119,7 +194,10 @@ input.onkeydown = async function (e) {
     e.preventDefault();
 
     const text = input.value.trim();
-    if (text === "") return;
+    if (text.length < 5) {
+      alert("메모는 5글자 이상 입력해 주세요.");
+      return;
+    }
 
     await addMemo(text);
     input.value = "";
@@ -130,4 +208,5 @@ input.onkeydown = async function (e) {
 // 첫 화면 그리기
 render();
 input.focus();
+
 
